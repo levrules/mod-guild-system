@@ -1,7 +1,9 @@
-Welcome to the **Guild System** module by [Moloko](https://github.com/levrules/mod-guild-system).
+# Welcome to the **Guild System** module by [Moloko](https://github.com/levrules/mod-guild-system).
 This module is designed to enhance guild interactions and rewards in your server environment, including configurable rates and announcements.
 
 ---
+
+### RU locales [README_RU](https://github.com/levrules/mod-guild-system/blob/main/README_RU.md)
 
 ## Overview
 

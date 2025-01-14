@@ -145,6 +145,7 @@ GuildSystemBaseXP == 250 xp
 
 1. Клонируйте данный репозиторий:
    ```bash
+   cd path/to/azerothcore/modules
    git clone https://github.com/levrules/mod-guild-system.git
    ```
 2. Скопируйте файл конфигурации в папку настроек вашего сервера.

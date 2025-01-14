@@ -1,6 +1,9 @@
 # Welcome to the **Guild System** module by [Moloko](https://github.com/levrules/mod-guild-system).
 This module is designed to enhance guild interactions and rewards in your server environment, including configurable rates and announcements.
 
+- I'm new to developing modules for Azeroth Core, so don't judge me too harshly. If there are moments where I made a mistake, please correct me so that I don't make similar mistakes in the future.
+- If you encounter a problem or error, please write to the discord or create a discussion on github.
+- Thank you very much for using this module and for the feedback.
 ---
 
 ### RU locales [README_RU](https://github.com/levrules/mod-guild-system/blob/main/README_RU.md)

@@ -157,7 +157,7 @@ public:
                 }
 
                 // Обновляем опыт гильдии
-                UpdateGuildExperience(guildId, xp);
+                UpdateGuildExperience(guildId, xp, player);
 
                 // Отправляем сообщение игроку, если лимит ещё не достигнут
                 if (GuildSystemAnnounce)
@@ -225,7 +225,7 @@ public:
             }
 
             // Обновляем опыт гильдии
-            UpdateGuildExperience(guildId, xp);
+            UpdateGuildExperience(guildId, xp, player);
 
             // Отправляем сообщение игроку, если лимит ещё не достигнут
             if (GuildSystemAnnounce)
@@ -242,7 +242,7 @@ public:
         }
     }
 
-    static void UpdateGuildExperience(uint32 guildId, uint32 xpGained)
+    static void UpdateGuildExperience(uint32 guildId, uint32 xpGained, Player* player)
     {
         // Проверяем, включена ли система ограничения недельного опыта
         if (GuildSystemWeeklyXPEnable)
@@ -351,6 +351,8 @@ public:
             CharacterDatabase.Execute(
                 "UPDATE `guild_system` SET `guildLevel` = {}, `guildXP` = {} WHERE `guildid` = {}",
                 guildLevel, leftoverXP, guildId);
+            
+            BroadcastLevelUpGuild(player, guildLevel);
 
             if (GuildSystemDebug) {
                 LOG_INFO("module", ">> DEBUG: Guild [{}] leveled up to [{}]. Remaining XP: [{}].",
@@ -368,6 +370,36 @@ public:
             }
         }
     }
+
+    static void BroadcastLevelUpGuild(Player* player, uint32 newLevel)
+    {
+        if (!player)
+        {
+            return;
+        }
+
+        auto guild = player->GetGuild();
+
+        if (!guild)
+        {
+            return;
+        }
+
+        auto handler = ChatHandler(player->GetSession());
+
+        // Fetch guild broadcast string locale.
+        auto msg = handler.PGetParseString(MSG_GUILDSYSTEM_LEVEL_UP, newLevel);
+
+                    if (GuildSystemDebug) {
+                        LOG_INFO("module", ">> DEBUG: Announce for levelup from guild chat [{}]",
+                                msg);
+                    }
+        WorldPacket data;
+        handler.BuildChatPacket(data, CHAT_MSG_GUILD_ACHIEVEMENT, LANG_UNIVERSAL, nullptr, nullptr, msg);
+
+        guild->BroadcastPacket(&data);
+    }
+
 
 private:    
 
@@ -450,7 +482,7 @@ public:
         if (Guild* guild = player->GetGuild())
         {
             uint32 guildId = guild->GetId();
-            guild_system::UpdateGuildExperience(guildId, rewardXP);
+            guild_system::UpdateGuildExperience(guildId, rewardXP, player);
 
             // Отправляем сообщение игроку, если лимит ещё не достигнут
             if (GuildSystemAnnounce)
@@ -476,7 +508,7 @@ public:
         if (Guild* guild = player->GetGuild())
         {
             uint32 guildId = guild->GetId();
-            guild_system::UpdateGuildExperience(guildId, rewardXP);
+            guild_system::UpdateGuildExperience(guildId, rewardXP, player);
 
             // Отправляем сообщение игроку, если лимит ещё не достигнут
             if (GuildSystemAnnounce)

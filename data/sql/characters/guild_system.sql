@@ -1,7 +1,7 @@
 CREATE TABLE `guild_system`  (
   `guildid` int NOT NULL COMMENT 'Guild id guild.guildid',
   `guildLevel` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '1' COMMENT 'Guild Level',
-  `guildXP` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '1' COMMENT 'Guild XP',,
+  `guildXP` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT '1' COMMENT 'Guild XP',
   `weeklyCap` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT '0' COMMENT 'Guild Weekly Cap',
   PRIMARY KEY (`guildid`) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 ROW_FORMAT = Dynamic;

@@ -13,6 +13,8 @@ This module is designed to enhance guild interactions and rewards in your server
 ### **mod-guild-system**
 The primary goal of this module is to adapt the guild leveling system, originally introduced in the Cataclysm expansion, for use exclusively with the Wrath of the Lich King (WoTLK) expansion. This adaptation is specifically tailored for servers utilizing the AzerothCore build.
 
+Guild level taken from this [article](https://wowpedia.fandom.com/wiki/Guild_advancement).
+
 ---
 
 ## Features

@@ -440,7 +440,7 @@ class guild_system_BattlegroundsReward : public BGScript
 public:
     guild_system_BattlegroundsReward() : BGScript("guild_system_BattlegroundsReward") {}
 
-    void OnBattlegroundEndReward(Battleground* bg, Player* player/*, TeamId winnerTeamId*/) 
+    void OnBattlegroundEndReward(Battleground* bg, Player* player, TeamId winnerTeamId) 
     {
         if (!GuildSystemEnable || !player || !bg)
             return;
@@ -460,13 +460,13 @@ public:
 
             if (GuildSystemDebug)
             {
-                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] from battleground [{}].",
-                        rewardXP, guildId, bg->GetMapId());
+                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] from battleground [{}] TeamId [{}].",
+                        rewardXP, guildId, bg->GetMapId(), winnerTeamId);
             }
         }
     }
 
-    void ArenaRewardItem(Player* player,/* TeamId bgTeamId, TeamId winnerTeamId,*/ const std::string& Type, uint32 RewardCount)
+    void ArenaRewardItem(Player* player, TeamId bgTeamId, TeamId winnerTeamId, const std::string& Type, uint32 RewardCount)
     {
         if (!GuildSystemEnable || !player)
             return;
@@ -486,8 +486,8 @@ public:
 
             if (GuildSystemDebug)
             {
-                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] for arena reward. Reward type: [{}], Count: [{}].",
-                        rewardXP, guildId, Type, RewardCount);
+                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] for arena reward. Reward type: [{}], Count: [{}], bgTeamId: [{}], winnerTeamId [{}].",
+                        rewardXP, guildId, Type, RewardCount, bgTeamId, winnerTeamId);
             }
         }
     }

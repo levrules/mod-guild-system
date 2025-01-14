@@ -1,0 +1,116 @@
+#
+# Created by Moloko (2024)
+# GitHub https://github.com/levrules/mod-guild-system
+#
+
+[worldserver]
+
+
+
+###########################################################################################
+#
+#   GUILD SYSTEM
+#
+#   SETTINGS
+#   RATE
+#
+###########################################################################################
+
+# SETTINGS
+# 
+#   GuildSystem.Enable - enabled system
+#           0 - disabled
+#           1 - enabled
+#   default: 1 (enabled)
+#
+
+GuildSystem.Enable = 1
+
+# 
+#   GuildSystem.Debug - enabled system
+#   Description: Debugging the module, data is displayed in the console
+#           0 - disabled
+#           1 - enabled
+#   default: 0 (enabled)
+#
+
+GuildSystem.Debug = 0
+
+# 
+#   GuildSystem.Announce - enabled announce
+#   Description: Displays information about gaining experience for certain actions
+#           0 - disabled
+#           1 - enabled
+#   default: 1 (enabled)
+#
+
+GuildSystem.Announce = 1
+
+
+
+
+#   RATE
+# 
+#   GuildSystem.RateXP - enabled system
+#           1+ - base rate xp
+#   default: 1
+#
+
+GuildSystem.RateXP = 1
+
+# 
+#   GuildSystem.RateXP.KillBoss - enabled system
+#           1+ - rate xp for kills boss
+#   default: 1
+#
+
+GuildSystem.RateXP.KillBoss = 1
+
+# 
+#   GuildSystem.RateXP.Quest - enabled system
+#           1+ - rate xp Completed Quest
+#   default: 1
+#
+
+GuildSystem.RateXP.Quest = 1
+
+# 
+#   GuildSystem.RateXP.PvP - enabled system
+#           1+ - rate xp PVP activiti
+#   default: 3
+#
+
+GuildSystem.RateXP.PvP = 3
+
+# 
+#   GuildSystem.WeeklyXP.Enable - enabled weekly cap
+#           0 - disabled
+#           1 - enabled
+#   default: 1 (enabled)
+#
+
+GuildSystem.WeeklyXP.Enable = 1
+
+# 
+#   GuildSystem.WeeklyXP
+#           1+ - cap weekly xp guild
+#   default: 10000000
+#
+
+GuildSystem.WeeklyXP = 10000000
+
+# 
+#   GuildSystem.WeeklyXP.Hours
+#           6 - hours in 24h format
+#   default: 6
+#
+
+GuildSystem.WeeklyXP.Hours = 6
+
+# 
+#   GuildSystem.WeeklyXP.Minute
+#           0 - minutes
+#   default: 0
+#
+
+GuildSystem.WeeklyXP.Minute = 0

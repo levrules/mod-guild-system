@@ -19,12 +19,12 @@ Guild level taken from this [article](https://wowpedia.fandom.com/wiki/Guild_adv
 
 ## Features
 
-- [x] Configurable settings for enabling/disabling specific features.
-- [x] Debugging options for testing and validation.
-- [x] Experience gain from various activities (PvP, boss kills, quests).
-- [x] Weekly XP caps to balance guild progression.
-- [x] Notification in the guild chat about the increase in the guild level.
-- [x] Command for a player to display guild information `.ginfo`
+- &#9989; Configurable settings for enabling/disabling specific features.
+- &#9989; Debugging options for testing and validation.
+- &#9989; Experience gain from various activities (PvP, boss kills, quests).
+- &#9989; Weekly XP caps to balance guild progression.
+- &#9989; Notification in the guild chat about the increase in the guild level.
+- &#9989; Command for a player to display guild information `.ginfo`
 
 ---
 
@@ -57,7 +57,7 @@ Calculates the XP for defeating creatures, including bosses:
   baseXP = GuildSystemRateXPKillBoss * GuildSystemBaseXP;
   ```
 - **Boss Check**: Identifies if the creature is a boss using:
-  ```
+  ```cpp
   isBoss = creature->GetCreatureTemplate()->type_flags & CREATURE_TYPE_FLAG_BOSS_MOB;
   ```
 - **Level Difference**: Adjusts based on the level gap:

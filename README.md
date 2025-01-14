@@ -24,6 +24,7 @@ Guild level taken from this [article](https://wowpedia.fandom.com/wiki/Guild_adv
 - [x] Experience gain from various activities (PvP, boss kills, quests).
 - [x] Weekly XP caps to balance guild progression.
 - [x] Notification in the guild chat about the increase in the guild level.
+- [x] Command for a player to display guild information `.ginfo`
 
 ---
 
@@ -155,9 +156,11 @@ Below are the available settings for the module, which you can configure in the 
    cd path/to/azerothcore/modules
    git clone https://github.com/levrules/mod-guild-system.git
    ```
-2. Copy the configuration file to your server's settings directory.
+2. Re-run cmake and launch a clean build of AzerothCore.
 3. Modify the configuration as needed.
 4. Restart your server to apply changes.
+
+&#9888; The module has changes in the `acore_string` tables where the identifiers `30098, 30099, 30100, 30101, 30102` will be changed, if these identifiers are used, it is recommended to change them in the `guild_system.h` file and also in the `acore_string.sql` file.
 
 ---
 

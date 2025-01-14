@@ -343,25 +343,26 @@ public:
         uint32 xpToNextLevel = xpResult->Fetch()[0].Get<uint32>();
         uint32 newXP = currentXP + xpGained;
 
-        if (newXP >= xpToNextLevel)
-        {
+        if (newXP >= xpToNextLevel) {
             uint32 leftoverXP = newXP - xpToNextLevel;
-            ++guildLevel;
+            ++guildLevel;  // Увеличиваем уровень гильдии
 
-            if (GuildSystemDebug)
-            {
+            // Записываем новый уровень в базу данных
+            CharacterDatabase.Execute(
+                "UPDATE `guild_system` SET `guildLevel` = {}, `guildXP` = {} WHERE `guildid` = {}",
+                guildLevel, leftoverXP, guildId);
+
+            if (GuildSystemDebug) {
                 LOG_INFO("module", ">> DEBUG: Guild [{}] leveled up to [{}]. Remaining XP: [{}].",
                         guildId, guildLevel, leftoverXP);
             }
-        }
-        else
-        {
+        } else {
+            // Если не достигнут порог для повышения уровня
             CharacterDatabase.Execute(
                 "UPDATE `guild_system` SET `guildXP` = {} WHERE `guildid` = {}",
                 newXP, guildId);
 
-            if (GuildSystemDebug)
-            {
+            if (GuildSystemDebug) {
                 LOG_INFO("module", ">> DEBUG: Guild [{}] earned [{}] XP. Total XP: [{}].",
                         guildId, xpGained, newXP);
             }

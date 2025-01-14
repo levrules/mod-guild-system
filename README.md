@@ -19,11 +19,11 @@ Guild level taken from this [article](https://wowpedia.fandom.com/wiki/Guild_adv
 
 ## Features
 
-- Configurable settings for enabling/disabling specific features.
-- Debugging options for testing and validation.
-- Experience gain from various activities (PvP, boss kills, quests).
-- Weekly XP caps to balance guild progression.
-- Notification in the guild chat about the increase in the guild level.
+- [x] Configurable settings for enabling/disabling specific features.
+- [x] Debugging options for testing and validation.
+- [x] Experience gain from various activities (PvP, boss kills, quests).
+- [x] Weekly XP caps to balance guild progression.
+- [x] Notification in the guild chat about the increase in the guild level.
 
 ---
 

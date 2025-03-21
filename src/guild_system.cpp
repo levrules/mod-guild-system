@@ -21,7 +21,7 @@ class guild_system : public PlayerScript
 public:
     guild_system() : PlayerScript("guild_system") {}
 
-    void OnLogin(Player* player) override
+    void OnLogin(Player* player)
     {
         if (GuildSystemEnable && GuildSystemAnnounce) 
         {
@@ -29,7 +29,7 @@ public:
         }
     }
 
-    void OnBeforeUpdate(Player* player, uint32 /*p_time*/) override
+    void OnBeforeUpdate(Player* player, uint32 /*p_time*/)
     {
         if (!GuildSystemEnable)
             return;
@@ -175,7 +175,7 @@ public:
         }
     }
 
-    void OnCreatureKill(Player* player, Creature* killed) override
+    void OnCreatureKill(Player* player, Creature* killed)
     {
         if (!player || !killed || !GuildSystemEnable)
             return;

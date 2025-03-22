@@ -29,7 +29,7 @@ public:
         }
     }
 
-    void OnBeforeUpdate(Player* player, uint32 /*p_time*/)
+    void OnPlayerBeforeUpdate(Player* player, uint32 /*p_time*/) override
     {
         if (!GuildSystemEnable)
             return;
@@ -175,7 +175,7 @@ public:
         }
     }
 
-    void OnPlayerCreatureKill(Player* player, Creature* killed)
+    void OnPlayerCreatureKill(Player* player, Creature* killed) override
     {
         if (!player || !killed || !GuildSystemEnable)
             return;
@@ -617,7 +617,7 @@ class guild_system_guilds : public GuildScript
 public:
     guild_system_guilds() : GuildScript("guild_system_guilds") {}
 
-    void OnCreate(Guild* guild, Player* /*leader*/, const std::string& /*name*/) override
+    virtual void OnCreate(Guild* guild, Player* /*leader*/, const std::string& /*name*/)
     {
         std::string query = fmt::format("INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`) VALUES ({}, 1, 1)", guild->GetId());
 
@@ -637,7 +637,7 @@ public:
         }
     }
 
-    void OnDisband(Guild* guild) override
+    virtual void OnDisband(Guild* guild)
     { 
         std::string query = fmt::format("DELETE FROM `guild_system` WHERE `guildid` = {}", guild->GetId());
 

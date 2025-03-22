@@ -175,7 +175,7 @@ public:
         }
     }
 
-    void OnCreatureKill(Player* player, Creature* killed)
+    void OnPlayerCreatureKill(Player* player, Creature* killed)
     {
         if (!player || !killed || !GuildSystemEnable)
             return;

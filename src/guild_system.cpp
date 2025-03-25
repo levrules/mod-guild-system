@@ -21,7 +21,7 @@ class guild_system : public PlayerScript
 public:
     guild_system() : PlayerScript("guild_system") {}
 
-    void OnLogin(Player* player)
+    void OnPlayerLogin(Player* player)
     {
         if (GuildSystemEnable && GuildSystemAnnounce) 
         {

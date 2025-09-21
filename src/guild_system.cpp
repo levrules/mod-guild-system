@@ -13,8 +13,20 @@
 #include "CommandScript.h"
 #include "GuildMgr.h"
 #include "ObjectMgr.h"
+#include "WorldSession.h"
+#include "WorldPacket.h"
+#include "Opcodes.h"
+#include <curl/curl.h>
+
 
 using namespace Acore::ChatCommands;
+
+enum CustomOpcodes
+{
+    SMSG_CUSTOM_API = 60000, // Кастомный опкод
+    CMSG_CUSTOM_API = 60001  // Опкод для запроса от клиента
+};
+
 
 class guild_system : public PlayerScript
 {
@@ -726,6 +738,7 @@ public:
         static ChatCommandTable commandTable =
         {
             { "ginfo", HandleGuildInfoCommand,  SEC_PLAYER, Console::No  },
+            { "glevel", HandleGuildLevelCommand, SEC_PLAYER, Console::No  },
         };
 
         return commandTable;
@@ -790,6 +803,39 @@ public:
         uint32 guildXP = fields1[0].Get<uint32>();
 
         handler->PSendSysMessage(MSG_GUILDSYSTEM_INFO, currentXp, guildXP, guildLevel, (guildXP > currentXp ? guildXP - currentXp : 0));
+        return true;
+    }
+    
+    static bool HandleGuildLevelCommand(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
+    {
+        Guild* guild = nullptr;
+
+        
+        if (guildIdentifier)
+        {
+            if (ObjectGuid::LowType const* guid = std::get_if<ObjectGuid::LowType>(&*guildIdentifier))
+                guild = sGuildMgr->GetGuildById(*guid);
+            else
+                guild = sGuildMgr->GetGuildByName(guildIdentifier->get<QuotedString>());
+        }
+        else if (Optional<PlayerIdentifier> target = PlayerIdentifier::FromTargetOrSelf(handler); target && target->IsConnected())
+            guild = target->GetConnectedPlayer()->GetGuild();
+
+        if (!guild)
+            return false;
+
+        // 1. Получаем ровень гильдии
+        uint32 guildId = guild->GetId();
+        QueryResult guildLevelResult = CharacterDatabase.Query(
+            "SELECT `guildLevel`, `guildXP` FROM `guild_system` WHERE `guildid` = {}", guildId);
+
+        if (!guildLevelResult)
+            return false;
+        
+        Field* fields = guildLevelResult->Fetch();
+        uint32 guildLevel = fields[0].Get<uint32>();
+        
+        handler->PSendSysMessage("ASMSGUILD_LEVEL {}", guildLevel);
         return true;
     }
     

@@ -11,6 +11,7 @@
 #
 #   SETTINGS
 #   RATE
+#   REPUTATION
 #
 ###########################################################################################
 
@@ -96,7 +97,7 @@ GuildSystem.WeeklyXP = 10000000
 
 #
 #   GuildSystem.WeeklyXP.WDay
-#   Description: Weekday for weekly XP cap reset (local server time)
+#   Description: Weekday for weekly XP / reputation week-cap reset (local server time)
 #           0 - Sunday
 #           1 - Monday
 #           2 - Tuesday
@@ -124,3 +125,68 @@ GuildSystem.WeeklyXP.Hours = 6
 #
 
 GuildSystem.WeeklyXP.Minute = 0
+
+#   REPUTATION
+#
+#   GuildSystem.Reputation.Enable
+#           0 - disabled
+#           1 - enabled
+#   default: 1 (enabled)
+#
+
+GuildSystem.Reputation.Enable = 1
+
+#
+#   GuildSystem.Reputation.QuestReward
+#   Description: Base reputation granted on quest turn-in (before Player::CalculateReputationGain).
+#                Same pipeline as normal quest/daily faction rewards.
+#                Daily quests use REPUTATION_SOURCE_DAILY_QUEST rates.
+#   default: 250
+#
+
+GuildSystem.Reputation.QuestReward = 250
+
+#
+#   GuildSystem.Reputation.KillReward
+#   Description: Base reputation granted on boss kill (before CalculateReputationGain / KILL rates).
+#           0 - disabled
+#   default: 125
+#
+
+GuildSystem.Reputation.KillReward = 125
+
+#
+#   GuildSystem.Reputation.PvPReward
+#   Description: Base reputation granted on BG/arena end (before CalculateReputationGain).
+#           0 - disabled
+#   default: 125
+#
+
+GuildSystem.Reputation.PvPReward = 125
+
+#
+#   GuildSystem.Reputation.WeeklyCap
+#   Description: Weekly personal guild reputation cap
+#   default: 4375
+#
+
+GuildSystem.Reputation.WeeklyCap = 4375
+
+#
+#   GuildSystem.Reputation.FactionId
+#   Description: Faction.dbc ID used to grant personal guild reputation via ReputationMgr.
+#                Required for reputation gains. If 0, reputation is not awarded.
+#   default: 0
+#
+
+GuildSystem.Reputation.FactionId = 0
+
+#
+#   GuildSystem.Reputation.Announce
+#   Description: Notify player when personal guild reputation is gained
+#           0 - disabled
+#           1 - enabled
+#   default: 1 (enabled)
+#
+
+GuildSystem.Reputation.Announce = 1

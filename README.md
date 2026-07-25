@@ -1,12 +1,7 @@
 # Welcome to the **Guild System** module by [Moloko](https://github.com/levrules/mod-guild-system).
 This module is designed to enhance guild interactions and rewards in your server environment, including configurable rates and announcements.
 
-- I'm new to developing modules for Azeroth Core, so don't judge me too harshly. If there are moments where I made a mistake, please correct me so that I don't make similar mistakes in the future.
-- If you encounter a problem or error, please write to the discord or create a discussion on github.
-- Thank you very much for using this module and for the feedback.
----
-
-### RU locales [README_RU](https://github.com/levrules/mod-guild-system/blob/main/README_RU.md)
+### RU locales [README_RU](README_RU.md)
 
 ## Overview
 
@@ -19,12 +14,13 @@ Guild level taken from this [article](https://wowpedia.fandom.com/wiki/Guild_adv
 
 ## Features
 
-- &#9989; Configurable settings for enabling/disabling specific features.
-- &#9989; Debugging options for testing and validation.
-- &#9989; Experience gain from various activities (PvP, boss kills, quests).
-- &#9989; Weekly XP caps to balance guild progression.
-- &#9989; Notification in the guild chat about the increase in the guild level.
-- &#9989; Command for a player to display guild information `.ginfo`
+- Configurable settings for enabling/disabling specific features.
+- Debugging options for testing and validation.
+- Experience gain from quests, boss kills, battlegrounds, and arenas.
+- True weekly XP cap with configurable weekday and time.
+- Guild bonus spells synced on login, join/leave, and guild level-up (cached, no per-tick DB queries).
+- Notification in the guild chat about guild level-up.
+- Player commands `.ginfo` and `.glevel`.
 
 ---
 
@@ -36,49 +32,36 @@ GuildSystemBaseXP == 250 xp
 
 #### 1. Guild XP from Complete Quests
 
-Calculates the XP awarded to the guild for completing a quest:
-
-- **Base XP**: Derived using the formula:
-  ```
-  baseXP = GuildSystemRateXPQuest * GuildSystemBaseXP;
-  ```
-- **Level Difference**: Adjusts XP based on the level difference between the player and the quest:
+- **Base XP**: `baseXP = GuildSystemRateXPQuest * GuildSystemBaseXP`
+- **Level Difference**:
   - Halved if the player is significantly over-leveled (`levelDifference > 5`).
   - Doubled if the quest is significantly harder (`levelDifference < -5`).
-- **Multiplier**: Scales the total XP using the global multiplier `GuildSystemRateXP`.
-- **Debugging**: Logs calculation details when `GuildSystemDebug` is enabled.
+- **Multiplier**: Scales with `GuildSystemRateXP`.
 
-#### 2. Guild XP from Creature Kills
+#### 2. Guild XP from Boss Kills
 
-Calculates the XP for defeating creatures, including bosses:
-
-- **Base XP**: Determined as:
-  ```
-  baseXP = GuildSystemRateXPKillBoss * GuildSystemBaseXP;
-  ```
-- **Boss Check**: Identifies if the creature is a boss using:
-  ```cpp
-  isBoss = creature->GetCreatureTemplate()->type_flags & CREATURE_TYPE_FLAG_BOSS_MOB;
-  ```
-- **Level Difference**: Adjusts based on the level gap:
-  - Halved if the player is significantly over-leveled.
-  - Doubled if the creature is much harder.
-- **Multiplier**: Applies the global XP multiplier `GuildSystemRateXP`.
-- **Debugging**: Logs creature details, XP calculation, and boss status if debugging is enabled.
+- **Base XP**: `baseXP = GuildSystemRateXPKillBoss * GuildSystemBaseXP`
+- **Boss Check**: `type_flags & CREATURE_TYPE_FLAG_BOSS_MOB`
+- **Level Difference**: same rules as quests (`> 5` / `< -5`).
+- **Multiplier**: Scales with `GuildSystemRateXP`.
 
 #### 3. Guild XP from PvP
 
-Calculates XP from PvP activities:
+- **Base XP**: `baseXP = GuildSystemRateXPPvP * GuildSystemBaseXP`
+- Awarded via `OnBattlegroundEndReward` for both battlegrounds and arenas (`bg->isArena()`).
+- **Multiplier**: Scales with `GuildSystemRateXP`.
 
-- **Base XP**: Determined using:
-  ```
-  baseXP = GuildSystemRateXPPvP * GuildSystemBaseXP;
-  ```
-- **Multiplier**: Scales the total XP using `GuildSystemRateXP`.
-- **Contextual Logging**:
-  - For battlegrounds, logs their name.
-  - For arenas, logs general information.
-- **Debugging**: Writes detailed XP logs based on PvP type when `GuildSystemDebug` is enabled.
+#### 4. Weekly XP cap
+
+- Cap amount: `GuildSystem.WeeklyXP`
+- Reset once per week at `GuildSystem.WeeklyXP.WDay` + `Hours` + `Minute` (local server time).
+- Default weekday: Tuesday (`2`).
+
+#### 5. Bonus spells
+
+- Configured in `guild_system_xp.spell` (nullable).
+- Applied for levels `1..guildLevel`.
+- Synced on login, guild join/leave/create/disband, and after guild level-up.
 
 ---
 
@@ -89,11 +72,11 @@ Calculates XP from PvP activities:
    cd path/to/azerothcore/modules
    git clone https://github.com/levrules/mod-guild-system.git
    ```
-2. Re-run cmake and launch a clean build of AzerothCore.
-3. Modify the configuration as needed.
-4. Restart your server to apply changes.
+2. Re-run cmake and build AzerothCore.
+3. Copy/merge `guild_system.conf.dist` into your worldserver config as needed.
+4. Restart the server so the DB updater applies module SQL.
 
-&#9888; The module has changes in the `acore_string` tables where the identifiers `30098, 30099, 30100, 30101, 30102` will be changed, if these identifiers are used, it is recommended to change them in the `guild_system.h` file and also in the `acore_string.sql` file.
+Warning: the module writes `acore_string` entries `30098–30102`. If those IDs are already used, change them in `guild_system.h` and `acore_string.sql`.
 
 ---
 

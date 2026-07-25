@@ -5,8 +5,6 @@
 
 [worldserver]
 
-
-
 ###########################################################################################
 #
 #   GUILD SYSTEM
@@ -17,8 +15,8 @@
 ###########################################################################################
 
 # SETTINGS
-# 
-#   GuildSystem.Enable - enabled system
+#
+#   GuildSystem.Enable
 #           0 - disabled
 #           1 - enabled
 #   default: 1 (enabled)
@@ -26,18 +24,18 @@
 
 GuildSystem.Enable = 1
 
-# 
-#   GuildSystem.Debug - enabled system
+#
+#   GuildSystem.Debug
 #   Description: Debugging the module, data is displayed in the console
 #           0 - disabled
 #           1 - enabled
-#   default: 0 (enabled)
+#   default: 0 (disabled)
 #
 
 GuildSystem.Debug = 0
 
-# 
-#   GuildSystem.Announce - enabled announce
+#
+#   GuildSystem.Announce
 #   Description: Displays information about gaining experience for certain actions
 #           0 - disabled
 #           1 - enabled
@@ -46,44 +44,41 @@ GuildSystem.Debug = 0
 
 GuildSystem.Announce = 1
 
-
-
-
 #   RATE
-# 
-#   GuildSystem.RateXP - enabled system
+#
+#   GuildSystem.RateXP
 #           1+ - base rate xp
 #   default: 1
 #
 
 GuildSystem.RateXP = 1
 
-# 
-#   GuildSystem.RateXP.KillBoss - enabled system
+#
+#   GuildSystem.RateXP.KillBoss
 #           1+ - rate xp for kills boss
 #   default: 1
 #
 
 GuildSystem.RateXP.KillBoss = 1
 
-# 
-#   GuildSystem.RateXP.Quest - enabled system
+#
+#   GuildSystem.RateXP.Quest
 #           1+ - rate xp Completed Quest
 #   default: 1
 #
 
 GuildSystem.RateXP.Quest = 1
 
-# 
-#   GuildSystem.RateXP.PvP - enabled system
-#           1+ - rate xp PVP activiti
+#
+#   GuildSystem.RateXP.PvP
+#           1+ - rate xp PVP activity (battlegrounds and arenas)
 #   default: 3
 #
 
 GuildSystem.RateXP.PvP = 3
 
-# 
-#   GuildSystem.WeeklyXP.Enable - enabled weekly cap
+#
+#   GuildSystem.WeeklyXP.Enable
 #           0 - disabled
 #           1 - enabled
 #   default: 1 (enabled)
@@ -91,25 +86,40 @@ GuildSystem.RateXP.PvP = 3
 
 GuildSystem.WeeklyXP.Enable = 1
 
-# 
+#
 #   GuildSystem.WeeklyXP
-#           1+ - cap weekly xp guild
+#           1+ - weekly XP cap per guild
 #   default: 10000000
 #
 
 GuildSystem.WeeklyXP = 10000000
 
-# 
+#
+#   GuildSystem.WeeklyXP.WDay
+#   Description: Weekday for weekly XP cap reset (local server time)
+#           0 - Sunday
+#           1 - Monday
+#           2 - Tuesday
+#           3 - Wednesday
+#           4 - Thursday
+#           5 - Friday
+#           6 - Saturday
+#   default: 2 (Tuesday)
+#
+
+GuildSystem.WeeklyXP.WDay = 2
+
+#
 #   GuildSystem.WeeklyXP.Hours
-#           6 - hours in 24h format
+#           0-23 - hour in 24h format
 #   default: 6
 #
 
 GuildSystem.WeeklyXP.Hours = 6
 
-# 
+#
 #   GuildSystem.WeeklyXP.Minute
-#           0 - minutes
+#           0-59 - minutes
 #   default: 0
 #
 

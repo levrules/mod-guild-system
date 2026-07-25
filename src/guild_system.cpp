@@ -1,754 +1,659 @@
 #include "guild_system.h"
-#include "Configuration/Config.h"
-#include "Player.h"
 #include "Battleground.h"
-#include "AccountMgr.h"
-#include "ScriptMgr.h"
-#include "Define.h"
-#include "GossipDef.h"
+#include "CharacterCache.h"
 #include "Chat.h"
-#include "DatabaseEnv.h"
-#include "GuildScript.h"
-#include "Guild.h"
 #include "CommandScript.h"
+#include "Configuration/Config.h"
+#include "Creature.h"
+#include "DatabaseEnv.h"
+#include "Guild.h"
 #include "GuildMgr.h"
-#include "ObjectMgr.h"
-#include "WorldSession.h"
+#include "GuildScript.h"
+#include "Player.h"
+#include "QuestDef.h"
+#include "ScriptMgr.h"
 #include "WorldPacket.h"
-#include "Opcodes.h"
-#include <curl/curl.h>
+#include "WorldScript.h"
 
+#include <ctime>
+#include <unordered_map>
+#include <unordered_set>
 
 using namespace Acore::ChatCommands;
 
-enum CustomOpcodes
+bool GuildSystemEnable = true;
+bool GuildSystemDebug = false;
+bool GuildSystemAnnounce = true;
+uint32 GuildSystemRateXP = 1;
+uint32 GuildSystemRateXPKillBoss = 1;
+uint32 GuildSystemRateXPQuest = 1;
+uint32 GuildSystemRateXPPvP = 3;
+uint32 GuildSystemBaseXP = 250;
+
+bool GuildSystemWeeklyXPEnable = true;
+uint32 GuildSystemWeeklyXP = 10000000;
+uint32 GuildSystemWeeklyXPWDay = 2;
+uint32 GuildSystemWeeklyXPHours = 6;
+uint32 GuildSystemWeeklyXPMinute = 0;
+
+namespace
 {
-    SMSG_CUSTOM_API = 60000, // Кастомный опкод
-    CMSG_CUSTOM_API = 60001  // Опкод для запроса от клиента
+struct GuildLevelInfo
+{
+    uint32 xpToNext = 0;
+    uint32 spellId = 0;
 };
 
+std::unordered_map<uint32, GuildLevelInfo> GuildXpCache;
+std::unordered_set<uint32> GuildBonusSpells;
 
-class guild_system : public PlayerScript
+void LoadGuildXpCache()
 {
-public:
-    guild_system() : PlayerScript("guild_system") {}
+    GuildXpCache.clear();
+    GuildBonusSpells.clear();
 
-    void OnPlayerLogin(Player* player)
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT `level`, `xp`, `spell` FROM `guild_system_xp`");
+
+    if (!result)
     {
-        if (GuildSystemEnable && GuildSystemAnnounce) 
-        {
-            ChatHandler(player->GetSession()).PSendSysMessage(GUILDSYSTEM_ANNOUCNE);
-        }
+        LOG_ERROR("module", ">> Guild System: failed to load guild_system_xp (table empty or missing).");
+        return;
     }
 
-    void OnPlayerBeforeUpdate(Player* player, uint32 /*p_time*/) override
+    do
     {
-        if (!GuildSystemEnable)
-            return;
+        Field* fields = result->Fetch();
+        uint32 level = fields[0].Get<uint32>();
+        GuildLevelInfo info;
+        info.xpToNext = fields[1].Get<uint32>();
+        if (!fields[2].IsNull())
+            info.spellId = fields[2].Get<uint32>();
 
-        // Проверяем, есть ли игрок
-        if (!player)
-            return;
+        GuildXpCache[level] = info;
+        if (info.spellId)
+            GuildBonusSpells.insert(info.spellId);
+    } while (result->NextRow());
 
-        Guild* guild = player->GetGuild();
+    if (GuildSystemDebug)
+        LOG_INFO("module", ">> DEBUG: Loaded {} guild level rows, {} bonus spells.",
+            GuildXpCache.size(), GuildBonusSpells.size());
+}
 
-        // Если игрок не в гильдии, удаляем все связанные с гильдиями заклинания
-        if (!guild)
-        {
-            QueryResult allGuildSpells = CharacterDatabase.Query(
-                "SELECT `spell` FROM `guild_system_xp`");
+void LoadGuildSystemConfig()
+{
+    GuildSystemEnable = sConfigMgr->GetOption<bool>("GuildSystem.Enable", true);
+    GuildSystemDebug = sConfigMgr->GetOption<bool>("GuildSystem.Debug", false);
+    GuildSystemAnnounce = sConfigMgr->GetOption<bool>("GuildSystem.Announce", true);
 
-            if (allGuildSpells)
-            {
-                do
-                {
-                    Field* fields = allGuildSpells->Fetch();
-                    uint32 spellId = fields[0].Get<uint32>();
+    GuildSystemRateXP = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP", 1);
+    GuildSystemRateXPKillBoss = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.KillBoss", 1);
+    GuildSystemRateXPQuest = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.Quest", 1);
+    GuildSystemRateXPPvP = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.PvP", 3);
 
-                    // Проверяем, знает ли игрок заклинание, перед его удалением
-                    if (player->HasSpell(spellId))
-                    {
-                        player->removeSpell(spellId, SPEC_MASK_ALL, false);
-                    }
-                } while (allGuildSpells->NextRow());
-            }
+    GuildSystemWeeklyXPEnable = sConfigMgr->GetOption<bool>("GuildSystem.WeeklyXP.Enable", true);
+    GuildSystemWeeklyXP = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP", 10000000);
+    GuildSystemWeeklyXPWDay = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP.WDay", 2);
+    GuildSystemWeeklyXPHours = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP.Hours", 6);
+    GuildSystemWeeklyXPMinute = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP.Minute", 0);
 
-            return; // Возвращаемся, так как игрок не в гильдии
-        }
+    if (GuildSystemWeeklyXPWDay > 6)
+        GuildSystemWeeklyXPWDay = 2;
+}
 
-        // Получаем ID гильдии
-        uint32 guildId = guild->GetId();
+void LogGuildSystemConfig()
+{
+    if (!GuildSystemDebug)
+        return;
 
-        // Получаем уровень гильдии
-        QueryResult guildLevelResult = CharacterDatabase.Query(
-            "SELECT `guildLevel` FROM `guild_system` WHERE `guildid` = {}", guildId);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.Enable: {}", GuildSystemEnable);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.Debug: {}", GuildSystemDebug);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.Announce: {}", GuildSystemAnnounce);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP: {}", GuildSystemRateXP);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.KillBoss: {}", GuildSystemRateXPKillBoss);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.Quest: {}", GuildSystemRateXPQuest);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.PvP: {}", GuildSystemRateXPPvP);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.Enable: {}", GuildSystemWeeklyXPEnable);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXP);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.WDay: {}", GuildSystemWeeklyXPWDay);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.Hours: {}", GuildSystemWeeklyXPHours);
+    LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.Minute: {}", GuildSystemWeeklyXPMinute);
+}
 
-        if (!guildLevelResult)
-            return;
+uint32 GetGuildLevel(uint32 guildId)
+{
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT `guildLevel` FROM `guild_system` WHERE `guildid` = {}", guildId);
 
-        Field* guildLevelFields = guildLevelResult->Fetch();
-        uint32 guildLevel = guildLevelFields[0].Get<uint32>();
+    if (!result)
+        return 1;
 
-        // 1. Получаем список всех заклинаний, которые нужно удалить (уровень > текущий)
-        QueryResult removeSpellResult = CharacterDatabase.Query(
-            "SELECT `spell` FROM `guild_system_xp` WHERE `level` > {}", guildLevel);
+    return result->Fetch()[0].Get<uint32>();
+}
 
-        if (removeSpellResult)
-        {
-            do
-            {
-                Field* fields = removeSpellResult->Fetch();
-                uint32 spellId = fields[0].Get<uint32>();
+void RemoveAllGuildBonusSpells(Player* player)
+{
+    if (!player)
+        return;
 
-                // Удаляем заклинания, которые больше не соответствуют текущему уровню
-                if (player->HasSpell(spellId))
-                {
-                    player->removeSpell(spellId, SPEC_MASK_ALL, false);
-                }
-            } while (removeSpellResult->NextRow());
-        }
+    for (uint32 spellId : GuildBonusSpells)
+        if (player->HasSpell(spellId))
+            player->removeSpell(spellId, SPEC_MASK_ALL, false);
+}
 
-        // 2. Получаем список заклинаний для обучения (уровень <= текущий)
-        QueryResult learnSpellResult = CharacterDatabase.Query(
-            "SELECT `spell` FROM `guild_system_xp` WHERE `level` <= {} AND `spell` IS NOT NULL AND `spell` <> 0", guildLevel);
+void SyncGuildSpells(Player* player, uint32 guildLevel)
+{
+    if (!player)
+        return;
 
-        if (!learnSpellResult)
-            return;
-
-        do 
-        {
-            Field* fields = learnSpellResult->Fetch();
-            uint32 spellId = fields[0].Get<uint32>();
-
-            // Проверяем, знает ли игрок уже заклинание
-            if (!player->HasSpell(spellId)) 
-            {
-                player->learnSpell(spellId);
-            }
-        } while (learnSpellResult->NextRow());
+    std::unordered_set<uint32> allowedSpells;
+    for (auto const& [level, info] : GuildXpCache)
+    {
+        if (level <= guildLevel && info.spellId)
+            allowedSpells.insert(info.spellId);
     }
 
-    void OnPlayerCompleteQuest(Player* player, Quest const* quest) override
+    for (uint32 spellId : GuildBonusSpells)
     {
-        if (GuildSystemEnable)
-        {
-            // Вычисляем опыт, который должен быть начислен гильдии
-            uint32 xp = CalculateGuildXPQuest(player, quest);
+        bool shouldHave = allowedSpells.find(spellId) != allowedSpells.end();
+        bool hasSpell = player->HasSpell(spellId);
 
-            if (Guild* guild = player->GetGuild())
-            {
-                uint32 guildId = guild->GetId();
+        if (shouldHave && !hasSpell)
+            player->learnSpell(spellId);
+        else if (!shouldHave && hasSpell)
+            player->removeSpell(spellId, SPEC_MASK_ALL, false);
+    }
+}
 
-                // Проверяем, достигнут ли лимит опыта
-                if (GuildSystemWeeklyXPEnable)
-                {
-                    QueryResult weeklyCapResult = CharacterDatabase.Query(
-                        "SELECT `weeklyCap` FROM `guild_system` WHERE `guildid` = {}", guildId);
+void SyncGuildSpellsForPlayer(Player* player)
+{
+    if (!player || !GuildSystemEnable)
+        return;
 
-                    if (weeklyCapResult)
-                    {
-                        uint32 currentWeeklyCap = weeklyCapResult->Fetch()[0].Get<uint32>();
-
-                        // Проверяем, достиг ли лимит
-                        if (currentWeeklyCap + xp > GuildSystemWeeklyXP)
-                        {
-                            uint32 allowableXP = GuildSystemWeeklyXP - currentWeeklyCap;
-                            xp = std::min(xp, allowableXP);
-
-                            // Если достигли лимита, опыт больше не начисляется
-                            if (xp == 0)
-                            {
-                                if (GuildSystemDebug)
-                                {
-                                    LOG_INFO("module", ">> DEBUG: Weekly XP cap reached for Guild ID [{}], no XP granted.", guildId);
-                                }
-                                return;
-                            }
-                        }
-                    }
-                }
-
-                // Обновляем опыт гильдии
-                UpdateGuildExperience(guildId, xp, player);
-
-                // Отправляем сообщение игроку, если лимит ещё не достигнут
-                if (GuildSystemAnnounce)
-                {
-                    ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, xp);
-                }
-
-                // Логирование в режиме Debug
-                if (GuildSystemDebug)
-                {
-                    LOG_INFO("module", ">> DEBUG: Player [{}] completed quest [{}] and earned [{}] XP for guild [{}].",
-                            player->GetName(), quest->GetQuestId(), xp, guildId);
-                }
-            }
-        }
+    Guild* guild = player->GetGuild();
+    if (!guild)
+    {
+        RemoveAllGuildBonusSpells(player);
+        return;
     }
 
-    void OnPlayerCreatureKill(Player* player, Creature* killed) override
+    SyncGuildSpells(player, GetGuildLevel(guild->GetId()));
+}
+
+void SyncOnlineGuildMembers(Guild* guild, uint32 guildLevel)
+{
+    if (!guild)
+        return;
+
+    struct SpellSyncDo
     {
-        if (!player || !killed || !GuildSystemEnable)
-            return;
-
-        bool isBoss = killed->GetCreatureTemplate()->type_flags & CREATURE_TYPE_FLAG_BOSS_MOB;
-
-        if (!isBoss)
-            return;
-        
-        // Вычисляем опыт, который должен быть начислен гильдии за убийство моба
-        uint32 xp = CalculateGuildXPKill(player, killed);
-
-        if (xp == 0)
-            return;
-
-        if (Guild* guild = player->GetGuild())
+        uint32 level;
+        void operator()(Player* player) const
         {
-            uint32 guildId = guild->GetId();
+            SyncGuildSpells(player, level);
+        }
+    } worker{ guildLevel };
 
-            // Проверяем, достигнут ли лимит опыта
-            if (GuildSystemWeeklyXPEnable)
-            {
-                QueryResult weeklyCapResult = CharacterDatabase.Query(
-                    "SELECT `weeklyCap` FROM `guild_system` WHERE `guildid` = {}", guildId);
+    guild->BroadcastWorker(worker);
+}
 
-                if (weeklyCapResult)
-                {
-                    uint32 currentWeeklyCap = weeklyCapResult->Fetch()[0].Get<uint32>();
+void BroadcastLevelUpGuild(Player* player, uint32 newLevel)
+{
+    if (!player)
+        return;
 
-                    // Проверяем, достиг ли лимит
-                    if (currentWeeklyCap + xp > GuildSystemWeeklyXP)
-                    {
-                        uint32 allowableXP = GuildSystemWeeklyXP - currentWeeklyCap;
-                        xp = std::min(xp, allowableXP);
+    Guild* guild = player->GetGuild();
+    if (!guild)
+        return;
 
-                        // Если достигли лимита, опыт больше не начисляется
-                        if (xp == 0)
-                        {
-                            if (GuildSystemDebug)
-                            {
-                                LOG_INFO("module", ">> DEBUG: Weekly XP cap reached for Guild ID [{}], no XP granted.", guildId);
-                            }
-                            return;
-                        }
-                    }
-                }
-            }
+    ChatHandler handler(player->GetSession());
+    std::string msg = handler.PGetParseString(MSG_GUILDSYSTEM_LEVEL_UP, newLevel);
 
-            // Обновляем опыт гильдии
-            UpdateGuildExperience(guildId, xp, player);
+    if (GuildSystemDebug)
+        LOG_INFO("module", ">> DEBUG: Guild level-up announce: {}", msg);
 
-            // Отправляем сообщение игроку, если лимит ещё не достигнут
-            if (GuildSystemAnnounce)
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, xp);
-            }
+    WorldPacket data;
+    handler.BuildChatPacket(data, CHAT_MSG_GUILD_ACHIEVEMENT, LANG_UNIVERSAL, nullptr, nullptr, msg);
+    guild->BroadcastPacket(&data);
+}
 
-            // Логирование в режиме Debug
+uint32 UpdateGuildExperience(uint32 guildId, uint32 xpGained, Player* player)
+{
+    if (!xpGained)
+        return 0;
+
+    QueryResult guildResult = CharacterDatabase.Query(
+        "SELECT `guildLevel`, `guildXP`, `weeklyCap` FROM `guild_system` WHERE `guildid` = {}", guildId);
+
+    uint32 guildLevel = 1;
+    uint32 currentXP = 0;
+    uint32 currentWeeklyCap = 0;
+
+    if (!guildResult)
+    {
+        if (GuildSystemWeeklyXPEnable && xpGained > GuildSystemWeeklyXP)
+            xpGained = GuildSystemWeeklyXP;
+
+        if (!xpGained)
+            return 0;
+
+        CharacterDatabase.Execute(
+            "INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`, `weeklyCap`) VALUES ({}, 1, {}, {})",
+            guildId, xpGained, GuildSystemWeeklyXPEnable ? xpGained : 0);
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Created guild_system row for guild [{}] with XP [{}].", guildId, xpGained);
+
+        return xpGained;
+    }
+
+    Field* fields = guildResult->Fetch();
+    guildLevel = fields[0].Get<uint32>();
+    currentXP = fields[1].Get<uint32>();
+    currentWeeklyCap = fields[2].Get<uint32>();
+
+    if (GuildSystemWeeklyXPEnable)
+    {
+        uint32 allowableXP = GuildSystemWeeklyXP > currentWeeklyCap ? GuildSystemWeeklyXP - currentWeeklyCap : 0;
+        if (xpGained > allowableXP)
+            xpGained = allowableXP;
+
+        if (!xpGained)
+        {
             if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Player [{}] killed creature [{}] and earned [{}] XP for guild [{}].",
-                        player->GetName(), killed->GetEntry(), xp, guildId);
-            }
+                LOG_INFO("module", ">> DEBUG: Weekly XP cap reached for guild [{}].", guildId);
+            return 0;
         }
+
+        CharacterDatabase.Execute(
+            "UPDATE `guild_system` SET `weeklyCap` = `weeklyCap` + {} WHERE `guildid` = {}",
+            xpGained, guildId);
     }
 
-    static void UpdateGuildExperience(uint32 guildId, uint32 xpGained, Player* player)
+    auto xpIt = GuildXpCache.find(guildLevel);
+    if (xpIt == GuildXpCache.end())
     {
-        // Проверяем, включена ли система ограничения недельного опыта
-        if (GuildSystemWeeklyXPEnable)
-        {
-            QueryResult weeklyCapResult = CharacterDatabase.Query(
-                "SELECT `weeklyCap` FROM `guild_system` WHERE `guildid` = {}", guildId);
-
-            uint32 currentWeeklyCap = 0;
-
-            if (!weeklyCapResult)
-            {
-                // Если строка не существует, создаем новую запись
-                CharacterDatabase.Execute(
-                    "INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`, `weeklyCap`) VALUES ({}, {}, {}, {})",
-                    guildId, 1, xpGained, xpGained);
-                currentWeeklyCap = xpGained;
-
-                if (GuildSystemDebug)
-                {
-                    LOG_INFO("module", ">> DEBUG: Created new entry for Guild ID [{}] with Level [{}], XP [{}], and WeeklyCap [{}].",
-                            guildId, 1, xpGained, currentWeeklyCap);
-                }
-            }
-            else
-            {
-                currentWeeklyCap = weeklyCapResult->Fetch()[0].Get<uint32>();
-            }
-
-            // Расчет доступного для начисления опыта
-            uint32 allowableXP = GuildSystemWeeklyXP > currentWeeklyCap ? GuildSystemWeeklyXP - currentWeeklyCap : 0;
-
-            // Ограничиваем начисление опыта до остатка от капа
-            if (xpGained > allowableXP)
-            {
-                xpGained = allowableXP;
-
-                if (GuildSystemDebug)
-                {
-                    LOG_INFO("module", ">> DEBUG: XP limited by weekly cap for Guild ID [{}]. Allowable XP: [{}].", guildId, allowableXP);
-                }
-            }
-
-            // Если начислять уже нечего, выходим из функции
-            if (xpGained == 0)
-            {
-                if (GuildSystemDebug)
-                {
-                    LOG_INFO("module", ">> DEBUG: No XP added to Guild ID [{}] as weekly cap is reached.", guildId);
-                }
-                return;
-            }
-
-            // Обновляем weeklyCap, добавляя реальное значение начисленного опыта
-            CharacterDatabase.Execute(
-                "UPDATE `guild_system` SET `weeklyCap` = `weeklyCap` + {} WHERE `guildid` = {}",
-                xpGained, guildId);
-
-        }
-
-        // Продолжаем начисление опыта
-        QueryResult guildResult = CharacterDatabase.Query(
-            "SELECT `guildLevel`, `guildXP` FROM `guild_system` WHERE `guildid` = {}", guildId);
-
-        if (!guildResult)
-        {
-            // Если записи нет, создаем её с нулевым уровнем
-            uint32 defaultLevel = 1;
-
-            CharacterDatabase.Execute(
-                "INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`, `weeklyCap`) VALUES ({}, {}, {}, {})",
-                guildId, defaultLevel, xpGained, xpGained);
-
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Created new entry for Guild ID [{}] with Level [{}], XP [{}], and WeeklyCap [{}].",
-                        guildId, 1, xpGained, xpGained);
-            }
-
-            return;
-        }
-
-        Field* guildFields = guildResult->Fetch();
-        uint32 guildLevel = guildFields[0].Get<uint32>();
-        uint32 currentXP = guildFields[1].Get<uint32>();
-
         QueryResult xpResult = CharacterDatabase.Query(
             "SELECT `xp` FROM `guild_system_xp` WHERE `level` = {}", guildLevel);
 
         if (!xpResult)
         {
-            if (GuildSystemDebug)
-            {
-                LOG_ERROR("module", ">> DEBUG: Guild level [{}] not found in guild_system_xp table.", guildLevel);
-            }
-            return;
+            LOG_ERROR("module", ">> Guild System: level [{}] missing in guild_system_xp.", guildLevel);
+            return 0;
         }
 
-        uint32 xpToNextLevel = xpResult->Fetch()[0].Get<uint32>();
-        uint32 newXP = currentXP + xpGained;
-
-        if (newXP >= xpToNextLevel) {
-            uint32 leftoverXP = newXP - xpToNextLevel;
-            ++guildLevel;  // Увеличиваем уровень гильдии
-
-            // Записываем новый уровень в базу данных
-            CharacterDatabase.Execute(
-                "UPDATE `guild_system` SET `guildLevel` = {}, `guildXP` = {} WHERE `guildid` = {}",
-                guildLevel, leftoverXP, guildId);
-            
-            BroadcastLevelUpGuild(player, guildLevel);
-
-            if (GuildSystemDebug) {
-                LOG_INFO("module", ">> DEBUG: Guild [{}] leveled up to [{}]. Remaining XP: [{}].",
-                        guildId, guildLevel, leftoverXP);
-            }
-        } else {
-            // Если не достигнут порог для повышения уровня
-            CharacterDatabase.Execute(
-                "UPDATE `guild_system` SET `guildXP` = {} WHERE `guildid` = {}",
-                newXP, guildId);
-
-            if (GuildSystemDebug) {
-                LOG_INFO("module", ">> DEBUG: Guild [{}] earned [{}] XP. Total XP: [{}].",
-                        guildId, xpGained, newXP);
-            }
-        }
+        GuildLevelInfo info;
+        info.xpToNext = xpResult->Fetch()[0].Get<uint32>();
+        GuildXpCache[guildLevel] = info;
+        xpIt = GuildXpCache.find(guildLevel);
     }
 
-    static void BroadcastLevelUpGuild(Player* player, uint32 newLevel)
+    uint32 xpToNextLevel = xpIt->second.xpToNext;
+    uint32 newXP = currentXP + xpGained;
+
+    if (newXP >= xpToNextLevel)
     {
-        if (!player)
-        {
+        uint32 leftoverXP = newXP - xpToNextLevel;
+        ++guildLevel;
+
+        CharacterDatabase.Execute(
+            "UPDATE `guild_system` SET `guildLevel` = {}, `guildXP` = {} WHERE `guildid` = {}",
+            guildLevel, leftoverXP, guildId);
+
+        BroadcastLevelUpGuild(player, guildLevel);
+
+        if (Guild* guild = player ? player->GetGuild() : sGuildMgr->GetGuildById(guildId))
+            SyncOnlineGuildMembers(guild, guildLevel);
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Guild [{}] leveled up to [{}]. Remaining XP: [{}].",
+                guildId, guildLevel, leftoverXP);
+    }
+    else
+    {
+        CharacterDatabase.Execute(
+            "UPDATE `guild_system` SET `guildXP` = {} WHERE `guildid` = {}",
+            newXP, guildId);
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Guild [{}] earned [{}] XP. Total XP: [{}].",
+                guildId, xpGained, newXP);
+    }
+
+    return xpGained;
+}
+
+uint32 CalculateGuildXPQuest(Player* player, Quest const* quest)
+{
+    uint32 baseXP = GuildSystemRateXPQuest * GuildSystemBaseXP;
+    uint32 multiplier = GuildSystemRateXP;
+    int32 levelDifference = static_cast<int32>(player->GetLevel()) - static_cast<int32>(quest->GetQuestLevel());
+
+    if (levelDifference > 5)
+        baseXP /= 2;
+    else if (levelDifference < -5)
+        baseXP *= 2;
+
+    uint32 totalXP = baseXP * multiplier;
+
+    if (GuildSystemDebug)
+        LOG_INFO("module", ">> DEBUG: Quest [{}] XP: baseXP [{}], multiplier [{}], totalXP [{}].",
+            quest->GetQuestId(), baseXP, multiplier, totalXP);
+
+    return totalXP;
+}
+
+uint32 CalculateGuildXPKill(Player* player, Creature* creature)
+{
+    uint32 baseXP = GuildSystemRateXPKillBoss * GuildSystemBaseXP;
+    uint32 multiplier = GuildSystemRateXP;
+    int32 levelDifference = static_cast<int32>(player->GetLevel()) - static_cast<int32>(creature->GetLevel());
+
+    if (levelDifference > 5)
+        baseXP /= 2;
+    else if (levelDifference < -5)
+        baseXP *= 2;
+
+    uint32 totalXP = baseXP * multiplier;
+
+    if (GuildSystemDebug)
+        LOG_INFO("module", ">> DEBUG: Boss kill [{}] XP: baseXP [{}], multiplier [{}], totalXP [{}].",
+            creature->GetEntry(), baseXP, multiplier, totalXP);
+
+    return totalXP;
+}
+
+uint32 CalculateGuildXPPvP(Player* player, Battleground* bg)
+{
+    if (!player)
+        return 0;
+
+    uint32 baseXP = GuildSystemRateXPPvP * GuildSystemBaseXP;
+    uint32 multiplier = GuildSystemRateXP;
+    uint32 totalXP = baseXP * multiplier;
+
+    if (GuildSystemDebug)
+    {
+        if (bg && bg->isArena())
+            LOG_INFO("module", ">> DEBUG: Arena XP: baseXP [{}], multiplier [{}], totalXP [{}], map [{}].",
+                baseXP, multiplier, totalXP, bg->GetMapId());
+        else if (bg)
+            LOG_INFO("module", ">> DEBUG: Battleground [{}] XP: baseXP [{}], multiplier [{}], totalXP [{}].",
+                bg->GetName(), baseXP, multiplier, totalXP);
+        else
+            LOG_INFO("module", ">> DEBUG: PvP XP: baseXP [{}], multiplier [{}], totalXP [{}].",
+                baseXP, multiplier, totalXP);
+    }
+
+    return totalXP;
+}
+} // namespace
+
+class guild_system : public PlayerScript
+{
+public:
+    guild_system() : PlayerScript("guild_system", {
+        PLAYERHOOK_ON_LOGIN,
+        PLAYERHOOK_ON_PLAYER_COMPLETE_QUEST,
+        PLAYERHOOK_ON_CREATURE_KILL
+    }) { }
+
+    void OnPlayerLogin(Player* player) override
+    {
+        if (!GuildSystemEnable || !player)
             return;
-        }
 
-        auto guild = player->GetGuild();
+        if (GuildSystemAnnounce)
+            ChatHandler(player->GetSession()).PSendSysMessage(GUILDSYSTEM_ANNOUCNE);
 
+        SyncGuildSpellsForPlayer(player);
+    }
+
+    void OnPlayerCompleteQuest(Player* player, Quest const* quest) override
+    {
+        if (!GuildSystemEnable || !player || !quest)
+            return;
+
+        Guild* guild = player->GetGuild();
         if (!guild)
-        {
             return;
-        }
 
-        auto handler = ChatHandler(player->GetSession());
+        uint32 xp = CalculateGuildXPQuest(player, quest);
+        uint32 granted = UpdateGuildExperience(guild->GetId(), xp, player);
+        if (!granted)
+            return;
 
-        // Fetch guild broadcast string locale.
-        auto msg = handler.PGetParseString(MSG_GUILDSYSTEM_LEVEL_UP, newLevel);
+        if (GuildSystemAnnounce)
+            ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, granted);
 
-                    if (GuildSystemDebug) {
-                        LOG_INFO("module", ">> DEBUG: Announce for levelup from guild chat [{}]",
-                                msg);
-                    }
-        WorldPacket data;
-        handler.BuildChatPacket(data, CHAT_MSG_GUILD_ACHIEVEMENT, LANG_UNIVERSAL, nullptr, nullptr, msg);
-
-        guild->BroadcastPacket(&data);
-    }
-
-
-private:    
-
-    uint32 CalculateGuildXPQuest(Player* player, Quest const* quest)
-    {
-        uint32 baseXP = GuildSystemRateXPQuest * GuildSystemBaseXP;  // Базовый опыт за квест
-        uint32 multiplier = GuildSystemRateXP;                      // Общий множитель
-        uint32 questLevel = quest->GetQuestLevel();                 // Уровень квеста
-        uint32 playerLevel = player->GetLevel();                    // Уровень игрока
-
-        // Разница уровней между квестом и игроком
-        int32 levelDifference = static_cast<int32>(playerLevel) - static_cast<int32>(questLevel);
-
-        // Расчет опыта с учетом уровня квеста и разницы в уровнях
-        if (levelDifference > 5)  // Игрок слишком высокого уровня
-            baseXP /= 2;          // Уменьшаем опыт
-        else if (levelDifference < -5)  // Квест слишком высокого уровня
-            baseXP *= 2;          // Увеличиваем опыт
-
-        // Общий опыт = базовый опыт * множитель из настроек
-        uint32 totalXP = baseXP * multiplier;
-
-        // Логирование в режиме Debug
         if (GuildSystemDebug)
-        {
-            LOG_INFO("module", ">> DEBUG: Calculated XP for quest [{}]: baseXP [{}], multiplier [{}], totalXP [{}].",
-                    quest->GetQuestId(), baseXP, multiplier, totalXP);
-        }
-
-        return totalXP;
+            LOG_INFO("module", ">> DEBUG: Player [{}] quest [{}] granted [{}] guild XP.",
+                player->GetName(), quest->GetQuestId(), granted);
     }
 
-    uint32 CalculateGuildXPKill(Player* player, Creature* creature)
+    void OnPlayerCreatureKill(Player* player, Creature* killed) override
     {
-        uint32 baseXP = GuildSystemRateXPKillBoss * GuildSystemBaseXP; // Базовый опыт за убийство
-        uint32 multiplier = GuildSystemRateXP;                         // Общий множитель опыта
-        uint32 creatureLevel = creature->GetLevel();                   // Уровень существа
-        uint32 playerLevel = player->GetLevel();                       // Уровень игрока
+        if (!GuildSystemEnable || !player || !killed)
+            return;
 
-        // Проверяем, является ли существо боссом
-        bool isBoss = creature->GetCreatureTemplate()->type_flags & CREATURE_TYPE_FLAG_BOSS_MOB;
+        if (!(killed->GetCreatureTemplate()->type_flags & CREATURE_TYPE_FLAG_BOSS_MOB))
+            return;
 
-        // Разница уровней между существом и игроком
-        int32 levelDifference = static_cast<int32>(playerLevel) - static_cast<int32>(creatureLevel);
+        Guild* guild = player->GetGuild();
+        if (!guild)
+            return;
 
-        if (levelDifference > 5) // Игрок слишком высокого уровня
-        {
-            baseXP /= 2; // Уменьшаем опыт
-        } else { // Существо слишком высокого уровня
-            baseXP *= 2; // Увеличиваем опыт
-        }
+        uint32 xp = CalculateGuildXPKill(player, killed);
+        uint32 granted = UpdateGuildExperience(guild->GetId(), xp, player);
+        if (!granted)
+            return;
 
-        // Общий опыт = базовый опыт * множитель из настроек
-        uint32 totalXP = baseXP * multiplier;
+        if (GuildSystemAnnounce)
+            ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, granted);
 
-        // Логирование в режиме Debug
         if (GuildSystemDebug)
-        {
-            LOG_INFO("module", ">> DEBUG: Calculated XP for kill [Creature ID: {}]: baseXP [{}], multiplier [{}], totalXP [{}], isBoss [{}].",
-                    creature->GetEntry(), baseXP, multiplier, totalXP, isBoss ? "true" : "false");
-        }
-
-        return totalXP;
+            LOG_INFO("module", ">> DEBUG: Player [{}] boss [{}] granted [{}] guild XP.",
+                player->GetName(), killed->GetEntry(), granted);
     }
-
 };
 
 class guild_system_BattlegroundsReward : public BGScript
 {
 public:
-    guild_system_BattlegroundsReward() : BGScript("guild_system_BattlegroundsReward") {}
+    guild_system_BattlegroundsReward() : BGScript("guild_system_BattlegroundsReward", {
+        ALLBATTLEGROUNDHOOK_ON_BATTLEGROUND_END_REWARD
+    }) { }
 
-    void OnBattlegroundEndReward(Battleground* bg, Player* player, TeamId winnerTeamId) 
+    void OnBattlegroundEndReward(Battleground* bg, Player* player, TeamId winnerTeamId) override
     {
         if (!GuildSystemEnable || !player || !bg)
             return;
 
-        uint32 rewardXP = CalculateGuildXPPvP(player, bg);
-
-        if (Guild* guild = player->GetGuild())
-        {
-            uint32 guildId = guild->GetId();
-            guild_system::UpdateGuildExperience(guildId, rewardXP, player);
-
-            // Отправляем сообщение игроку, если лимит ещё не достигнут
-            if (GuildSystemAnnounce)
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, rewardXP);
-            }
-
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] from battleground [{}] TeamId [{}].",
-                        rewardXP, guildId, bg->GetMapId(), winnerTeamId);
-            }
-        }
-    }
-
-    void ArenaRewardItem(Player* player, TeamId bgTeamId, TeamId winnerTeamId, const std::string& Type, uint32 RewardCount)
-    {
-        if (!GuildSystemEnable || !player)
+        Guild* guild = player->GetGuild();
+        if (!guild)
             return;
 
-        uint32 rewardXP = CalculateGuildXPPvP(player, nullptr);
+        uint32 rewardXP = CalculateGuildXPPvP(player, bg);
+        uint32 granted = UpdateGuildExperience(guild->GetId(), rewardXP, player);
+        if (!granted)
+            return;
 
-        if (Guild* guild = player->GetGuild())
-        {
-            uint32 guildId = guild->GetId();
-            guild_system::UpdateGuildExperience(guildId, rewardXP, player);
-
-            // Отправляем сообщение игроку, если лимит ещё не достигнут
-            if (GuildSystemAnnounce)
-            {
-                ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, rewardXP);
-            }
-
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Added [{}] XP to guild [{}] for arena reward. Reward type: [{}], Count: [{}], bgTeamId: [{}], winnerTeamId [{}].",
-                        rewardXP, guildId, Type, RewardCount, bgTeamId, winnerTeamId);
-            }
-        }
-    }
-
-private:
-    uint32 CalculateGuildXPPvP(Player* player, Battleground* bg)
-    {
-        if (!player)
-        {
-            if (GuildSystemDebug)
-                LOG_ERROR("module", ">> ERROR: CalculateGuildXPPvP called with null player.");
-            return 0;
-        }
-
-        uint32 baseXP = GuildSystemRateXPPvP * GuildSystemBaseXP;
-        uint32 multiplier = GuildSystemRateXP;
-        uint32 totalXP = baseXP * multiplier;
+        if (GuildSystemAnnounce)
+            ChatHandler(player->GetSession()).PSendSysMessage(MSG_GUILDSYSTEM_GAIN_XP, granted);
 
         if (GuildSystemDebug)
         {
-            if (bg)
-            {
-                LOG_INFO("module", ">> DEBUG: Calculated XP for Battleground [{}]: baseXP [{}], multiplier [{}], totalXP [{}].",
-                        bg->GetName(), baseXP, multiplier, totalXP);
-            }
+            if (bg->isArena())
+                LOG_INFO("module", ">> DEBUG: Arena reward [{}] XP to guild [{}], winnerTeam [{}].",
+                    granted, guild->GetId(), winnerTeamId);
             else
-            {
-                LOG_INFO("module", ">> DEBUG: Calculated XP for arena: baseXP [{}], multiplier [{}], totalXP [{}].",
-                        baseXP, multiplier, totalXP);
-            }
+                LOG_INFO("module", ">> DEBUG: BG [{}] reward [{}] XP to guild [{}], winnerTeam [{}].",
+                    bg->GetName(), granted, guild->GetId(), winnerTeamId);
         }
-
-        return totalXP;
     }
 };
 
-class guild_system_DailyResetSystem : public WorldScript
+class guild_system_WeeklyResetSystem : public WorldScript
 {
 public:
-    guild_system_DailyResetSystem() : WorldScript("guild_system_DailyResetSystem") { }
+    guild_system_WeeklyResetSystem() : WorldScript("guild_system_WeeklyResetSystem", {
+        WORLDHOOK_ON_UPDATE
+    }) { }
 
-    void OnUpdate(uint32 /* diff */) override
+    void OnUpdate(uint32 /*diff*/) override
     {
-        ScheduleDailyReset();
+        if (!GuildSystemEnable || !GuildSystemWeeklyXPEnable)
+            return;
+
+        time_t now = time(nullptr);
+        tm localTm = {};
+        localtime_r(&now, &localTm);
+
+        if (static_cast<uint32>(localTm.tm_wday) != GuildSystemWeeklyXPWDay)
+            return;
+
+        if (static_cast<uint32>(localTm.tm_hour) != GuildSystemWeeklyXPHours)
+            return;
+
+        if (static_cast<uint32>(localTm.tm_min) != GuildSystemWeeklyXPMinute)
+            return;
+
+        if (_lastResetTime != 0)
+        {
+            tm lastTm = {};
+            localtime_r(&_lastResetTime, &lastTm);
+            if (lastTm.tm_year == localTm.tm_year && lastTm.tm_yday == localTm.tm_yday)
+                return;
+        }
+
+        _lastResetTime = now;
+        CharacterDatabase.Execute("UPDATE `guild_system` SET `weeklyCap` = 0");
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Weekly XP caps have been reset (WDay={}, {:02d}:{:02d}).",
+                GuildSystemWeeklyXPWDay, GuildSystemWeeklyXPHours, GuildSystemWeeklyXPMinute);
     }
 
 private:
-    void ScheduleDailyReset()
-    {
-        // Проверяем текущее время
-        time_t now = time(nullptr);
-        tm* localtm = localtime(&now);
-
-        int currentTimeHour = localtm->tm_hour;
-        int currentTimeMin = localtm->tm_min;
-        int currentTimeSec = localtm->tm_sec;
-
-        int configTimeHour = GuildSystemWeeklyXPHours; // Час для сброса, по умолчанию 6
-        int configTimeMinut = GuildSystemWeeklyXPMinute; // Минуты для сброса, по умолчанию 0
-
-        bool resetDaily;
-
-        // Проверка, чтобы сброс происходил каждый день в 6 утра
-        if (currentTimeHour == configTimeHour && currentTimeMin == configTimeMinut && currentTimeSec == 0) {
-            resetDaily = true;
-        } else {
-            resetDaily = false;
-        }
-
-        if (resetDaily) {
-            ResetWeeklyXP();  // Сброс XP
-            resetDaily = false;
-        }
-    }
-
-    void ResetWeeklyXP()
-    {
-        // Функция для сброса XP
-        if (!GuildSystemWeeklyXPEnable)
-            return;
-
-        // Сбрасываем XP в таблице guild_system
-        CharacterDatabase.Execute("UPDATE `guild_system` SET `weeklyCap` = 0");
-
-        // Логирование
-        if (GuildSystemDebug)
-        {
-            LOG_INFO("module", ">> DEBUG: Weekly XP caps have been reset.");
-        }
-    }
+    time_t _lastResetTime = 0;
 };
 
 class guild_system_guilds : public GuildScript
 {
 public:
-    guild_system_guilds() : GuildScript("guild_system_guilds") {}
+    guild_system_guilds() : GuildScript("guild_system_guilds", {
+        GUILDHOOK_ON_CREATE,
+        GUILDHOOK_ON_DISBAND,
+        GUILDHOOK_ON_ADD_MEMBER,
+        GUILDHOOK_ON_REMOVE_MEMBER
+    }) { }
 
-    virtual void OnCreate(Guild* guild, Player* /*leader*/, const std::string& /*name*/)
+    void OnCreate(Guild* guild, Player* leader, std::string const& /*name*/) override
     {
-        std::string query = fmt::format("INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`) VALUES ({}, 1, 1)", guild->GetId());
+        if (!guild)
+            return;
 
-        if (!CharacterDatabase.Query(query))
-        {
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Successfully created guild entry in table guild_system.");
-            }
-        }
-        else
-        {
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Error while creating guild entry in table guild_system.");
-            }
-        }
+        CharacterDatabase.Execute(
+            "INSERT INTO `guild_system` (`guildid`, `guildLevel`, `guildXP`, `weeklyCap`) VALUES ({}, 1, 0, 0)",
+            guild->GetId());
+
+        if (leader && GuildSystemEnable)
+            SyncGuildSpells(leader, 1);
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Created guild_system entry for guild [{}].", guild->GetId());
     }
 
-    virtual void OnDisband(Guild* guild)
-    { 
-        std::string query = fmt::format("DELETE FROM `guild_system` WHERE `guildid` = {}", guild->GetId());
+    void OnDisband(Guild* guild) override
+    {
+        if (!guild)
+            return;
 
-        if (!CharacterDatabase.Query(query)) {
-            if (GuildSystemDebug)
+        struct RemoveSpellsDo
+        {
+            void operator()(Player* player) const
             {
-                LOG_INFO("module", ">> DEBUG: Successfully deleted guild entry in table guild_system.");
+                RemoveAllGuildBonusSpells(player);
             }
-        } else {
-            if (GuildSystemDebug)
-            {
-                LOG_INFO("module", ">> DEBUG: Error while deleted guild entry in table guild_system.");
-            }
-        }
+        } worker;
+
+        guild->BroadcastWorker(worker);
+
+        CharacterDatabase.Execute(
+            "DELETE FROM `guild_system` WHERE `guildid` = {}", guild->GetId());
+
+        if (GuildSystemDebug)
+            LOG_INFO("module", ">> DEBUG: Deleted guild_system entry for guild [{}].", guild->GetId());
     }
 
+    void OnAddMember(Guild* guild, Player* player, uint8& /*plRank*/) override
+    {
+        if (!GuildSystemEnable || !guild || !player)
+            return;
+
+        SyncGuildSpells(player, GetGuildLevel(guild->GetId()));
+    }
+
+    void OnRemoveMember(Guild* /*guild*/, Player* player, bool /*isDisbanding*/, bool /*isKicked*/) override
+    {
+        if (!player)
+            return;
+
+        RemoveAllGuildBonusSpells(player);
+    }
 };
 
 class guild_system_conf : public WorldScript
 {
 public:
-    guild_system_conf() : WorldScript("guild_system_conf") {
-        LOG_INFO("module", ">> Guild System its running.");
-        if (GuildSystemDebug)
-        {
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Enable: {}", GuildSystemEnable);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Debug: {}", GuildSystemDebug);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Announce: {}", GuildSystemAnnounce);
+    guild_system_conf() : WorldScript("guild_system_conf", {
+        WORLDHOOK_ON_BEFORE_CONFIG_LOAD,
+        WORLDHOOK_ON_AFTER_CONFIG_LOAD,
+        WORLDHOOK_ON_STARTUP
+    }) { }
 
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP: {}", GuildSystemRateXP);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.KillBoss: {}", GuildSystemRateXPKillBoss);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.Quest: {}", GuildSystemRateXPQuest);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.PvP: {}", GuildSystemRateXPPvP);
-
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.Enable: {}", GuildSystemWeeklyXPEnable);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXP);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXPHours);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXPMinute);
-
-        }
+    void OnBeforeConfigLoad(bool /*reload*/) override
+    {
+        LoadGuildSystemConfig();
     }
 
-    void OnBeforeConfigLoad(bool reload) override
+    void OnAfterConfigLoad(bool reload) override
     {
-        if (!reload) 
-        {
-            // Загружаем параметры конфигурации
-            GuildSystemEnable = sConfigMgr->GetOption<bool>("GuildSystem.Enable", true);
-            GuildSystemDebug = sConfigMgr->GetOption<bool>("GuildSystem.Debug", true);
-            GuildSystemAnnounce = sConfigMgr->GetOption<bool>("GuildSystem.Announce", true);
+        LoadGuildSystemConfig();
+        LogGuildSystemConfig();
 
-            GuildSystemRateXP = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP", 1);
-            GuildSystemRateXPKillBoss = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.KillBoss", 1);
-            GuildSystemRateXPQuest = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.Quest", 1);
-            GuildSystemRateXPPvP = sConfigMgr->GetOption<uint32>("GuildSystem.RateXP.PvP", 1);
+        if (reload)
+            LoadGuildXpCache();
 
-            GuildSystemWeeklyXPEnable = sConfigMgr->GetOption<bool>("GuildSystem.WeeklyXP.Enable", true);
-            GuildSystemWeeklyXP = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP", 1000000);
-            GuildSystemWeeklyXPHours = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP.Hours", 6);
-            GuildSystemWeeklyXPMinute = sConfigMgr->GetOption<uint32>("GuildSystem.WeeklyXP.Minute", 0);
-        } else {
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Enable: {}", GuildSystemEnable);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Debug: {}", GuildSystemDebug);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.Announce: {}", GuildSystemAnnounce);
+        LOG_INFO("module", ">> Guild System is running.");
+    }
 
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP: {}", GuildSystemRateXP);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.KillBoss: {}", GuildSystemRateXPKillBoss);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.Quest: {}", GuildSystemRateXPQuest);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.RateXP.PvP: {}", GuildSystemRateXPPvP);
-
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP.Enable: {}", GuildSystemWeeklyXPEnable);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXP);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXPHours);
-            LOG_INFO("module", ">> DEBUG: GuildSystem.WeeklyXP: {}", GuildSystemWeeklyXPMinute);
-        }
+    void OnStartup() override
+    {
+        LoadGuildXpCache();
     }
 };
 
 class guild_system_command : public CommandScript
 {
 public:
-    guild_system_command() : CommandScript("guild_system_command") {}
+    guild_system_command() : CommandScript("guild_system_command") { }
 
     ChatCommandTable GetCommands() const override
     {
         static ChatCommandTable commandTable =
         {
-            { "ginfo", HandleGuildInfoCommand,  SEC_PLAYER, Console::No  },
-            { "glevel", HandleGuildLevelCommand, SEC_PLAYER, Console::No  },
+            { "ginfo", HandleGuildInfoCommand, SEC_PLAYER, Console::No },
+            { "glevel", HandleGuildLevelCommand, SEC_PLAYER, Console::No },
         };
 
         return commandTable;
     }
 
-    static bool HandleGuildInfoCommand(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
+    static Guild* ResolveGuild(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
     {
         Guild* guild = nullptr;
 
-        
         if (guildIdentifier)
         {
             if (ObjectGuid::LowType const* guid = std::get_if<ObjectGuid::LowType>(&*guildIdentifier))
@@ -759,86 +664,79 @@ public:
         else if (Optional<PlayerIdentifier> target = PlayerIdentifier::FromTargetOrSelf(handler); target && target->IsConnected())
             guild = target->GetConnectedPlayer()->GetGuild();
 
+        return guild;
+    }
+
+    static bool SendGuildXpInfo(ChatHandler* handler, Guild* guild)
+    {
         if (!guild)
             return false;
 
-        // Display Guild Information
-        handler->PSendSysMessage(LANG_GUILD_INFO_NAME, guild->GetName(), guild->GetId()); // Guild Id + Name
-
-        std::string guildMasterName;
-        if (sCharacterCache->GetCharacterNameByGuid(guild->GetLeaderGUID(), guildMasterName))
-            handler->PSendSysMessage(MSG_GUILDSYSTEM_INFO_LEADER, guildMasterName); // Guild Master
-
-        // Format creation date
-        char createdDateStr[20];
-        time_t createdDate = guild->GetCreatedDate();
-        tm localTm;
-        strftime(createdDateStr, 20, "%Y-%m-%d %H:%M:%S", localtime_r(&createdDate, &localTm));
-
-        handler->PSendSysMessage(LANG_GUILD_INFO_CREATION_DATE, createdDateStr); // Creation Date
-        handler->PSendSysMessage(LANG_GUILD_INFO_MEMBER_COUNT, guild->GetMemberCount()); // Number of Members
-        handler->PSendSysMessage(LANG_GUILD_INFO_BANK_GOLD, guild->GetTotalBankMoney() / 100 / 100); // Bank Gold (in gold coins)
-        handler->PSendSysMessage(LANG_GUILD_INFO_MOTD, guild->GetMOTD()); // Message of the Day
-        handler->PSendSysMessage(LANG_GUILD_INFO_EXTRA_INFO, guild->GetInfo()); // Extra Information
-
-        // 1. Получаем уровень гильдии
         uint32 guildId = guild->GetId();
         QueryResult guildLevelResult = CharacterDatabase.Query(
             "SELECT `guildLevel`, `guildXP` FROM `guild_system` WHERE `guildid` = {}", guildId);
 
         if (!guildLevelResult)
             return false;
-        
+
         Field* fields = guildLevelResult->Fetch();
         uint32 guildLevel = fields[0].Get<uint32>();
         uint32 currentXp = fields[1].Get<uint32>();
-        
-        QueryResult guildXPResult = CharacterDatabase.Query(
-            "SELECT `xp` FROM guild_system_xp WHERE `level` = {}", guildLevel);
 
-        if (!guildXPResult)
-            return false;
+        uint32 guildXP = 0;
+        auto xpIt = GuildXpCache.find(guildLevel);
+        if (xpIt != GuildXpCache.end())
+            guildXP = xpIt->second.xpToNext;
+        else
+        {
+            QueryResult guildXPResult = CharacterDatabase.Query(
+                "SELECT `xp` FROM `guild_system_xp` WHERE `level` = {}", guildLevel);
 
-        Field* fields1 = guildXPResult->Fetch();
-        uint32 guildXP = fields1[0].Get<uint32>();
+            if (!guildXPResult)
+                return false;
 
-        handler->PSendSysMessage(MSG_GUILDSYSTEM_INFO, currentXp, guildXP, guildLevel, (guildXP > currentXp ? guildXP - currentXp : 0));
+            guildXP = guildXPResult->Fetch()[0].Get<uint32>();
+        }
+
+        handler->PSendSysMessage(MSG_GUILDSYSTEM_INFO, currentXp, guildXP, guildLevel,
+            (guildXP > currentXp ? guildXP - currentXp : 0));
         return true;
     }
-    
-    static bool HandleGuildLevelCommand(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
+
+    static bool HandleGuildInfoCommand(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
     {
-        Guild* guild = nullptr;
-
-        
-        if (guildIdentifier)
-        {
-            if (ObjectGuid::LowType const* guid = std::get_if<ObjectGuid::LowType>(&*guildIdentifier))
-                guild = sGuildMgr->GetGuildById(*guid);
-            else
-                guild = sGuildMgr->GetGuildByName(guildIdentifier->get<QuotedString>());
-        }
-        else if (Optional<PlayerIdentifier> target = PlayerIdentifier::FromTargetOrSelf(handler); target && target->IsConnected())
-            guild = target->GetConnectedPlayer()->GetGuild();
-
+        Guild* guild = ResolveGuild(handler, guildIdentifier);
         if (!guild)
             return false;
 
-        // 1. Получаем ровень гильдии
-        uint32 guildId = guild->GetId();
-        QueryResult guildLevelResult = CharacterDatabase.Query(
-            "SELECT `guildLevel`, `guildXP` FROM `guild_system` WHERE `guildid` = {}", guildId);
+        handler->PSendSysMessage(LANG_GUILD_INFO_NAME, guild->GetName(), guild->GetId());
 
-        if (!guildLevelResult)
-            return false;
-        
-        Field* fields = guildLevelResult->Fetch();
-        uint32 guildLevel = fields[0].Get<uint32>();
-        
-        handler->PSendSysMessage("ASMSGUILD_LEVEL {}", guildLevel);
-        return true;
+        std::string guildMasterName;
+        if (sCharacterCache->GetCharacterNameByGuid(guild->GetLeaderGUID(), guildMasterName))
+            handler->PSendSysMessage(MSG_GUILDSYSTEM_INFO_LEADER, guildMasterName);
+
+        char createdDateStr[20];
+        time_t createdDate = guild->GetCreatedDate();
+        tm localTm = {};
+        strftime(createdDateStr, sizeof(createdDateStr), "%Y-%m-%d %H:%M:%S", localtime_r(&createdDate, &localTm));
+
+        handler->PSendSysMessage(LANG_GUILD_INFO_CREATION_DATE, createdDateStr);
+        handler->PSendSysMessage(LANG_GUILD_INFO_MEMBER_COUNT, guild->GetMemberCount());
+        handler->PSendSysMessage(LANG_GUILD_INFO_BANK_GOLD, guild->GetTotalBankMoney() / 100 / 100);
+        handler->PSendSysMessage(LANG_GUILD_INFO_MOTD, guild->GetMOTD());
+        handler->PSendSysMessage(LANG_GUILD_INFO_EXTRA_INFO, guild->GetInfo());
+
+        return SendGuildXpInfo(handler, guild);
     }
-    
+
+    static bool HandleGuildLevelCommand(ChatHandler* handler, Optional<Variant<ObjectGuid::LowType, QuotedString>> const& guildIdentifier)
+    {
+        Guild* guild = ResolveGuild(handler, guildIdentifier);
+        if (!guild)
+            return false;
+
+        return SendGuildXpInfo(handler, guild);
+    }
 };
 
 void AddGuildSystemScripts()
@@ -847,6 +745,6 @@ void AddGuildSystemScripts()
     new guild_system_conf();
     new guild_system_guilds();
     new guild_system_BattlegroundsReward();
-    new guild_system_DailyResetSystem();
+    new guild_system_WeeklyResetSystem();
     new guild_system_command();
 }
